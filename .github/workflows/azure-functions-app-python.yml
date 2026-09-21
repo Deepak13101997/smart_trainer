@@ -1,0 +1,137 @@
+name: ANPR Flask CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "sub-main", "main" ]
+  pull_request:
+    branches: [ "sub-main", "main" ]
+
+jobs:
+  # =========================================================
+  # JOB 1: AUTOMATED TESTING (CI)
+  # Runs when pushing to 'sub-main' or 'main'
+  # =========================================================
+  test:
+    name: Run Automated Tests
+    runs-on: ubuntu-latest
+
+    # No Redis/DB service needed here - this project (Flask + YOLO + OpenCV +
+    # OCR) has no service dependency like Django's cache/session backend.
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+        cache: "pip"  # caches pip downloads between runs, since torch/paddleocr/ultralytics are large
+
+    - name: Install System Dependencies for OpenCV
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg libsm6 libxext6 libgl1 libglib2.0-0
+
+    - name: Install Python Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    - name: Lint with flake8
+      run: |
+        # stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # exit-zero treats all remaining issues as warnings only (doesn't fail the build)
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+    # No pytest tests yet, and app.py can't fully run in CI anyway (it needs
+    # yolo26n.pt / ANPR.pt model files + a real camera/video, neither of
+    # which exist on the CI runner). This step just makes sure every .py
+    # file is at least syntactically valid, catching typos/broken edits
+    # before they reach main.
+    - name: Syntax-check all Python files
+      run: |
+        python -m py_compile $(find . -name "*.py" -not -path "./.git/*")
+
+    # Once you add real tests (e.g. under a tests/ folder - testing helper
+    # functions like clean_plate_text_predict(), correct_indian_plate(),
+    # is_plate_inside_vehicle() with plain inputs/outputs, not the live
+    # camera/model pipeline), uncomment this:
+    # - name: Test with pytest
+    #   run: |
+    #     pip install pytest
+    #     pytest
+
+  # =========================================================
+  # JOB 2: DEPLOYMENT (CD)
+  # Runs ONLY on 'main' branch AFTER tests pass!
+  # =========================================================
+  deploy:
+    name: Deploy to Local Server
+    runs-on: ubuntu-latest
+    needs: test                     # <-- Only runs if 'test' job passes!
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+    # --------------------------------------------------------------
+    # NOTE: Your ANPR server sits on a LOCAL/PRIVATE network (with the
+    # RTSP camera), not a public VPS like Contabo. A GitHub-hosted
+    # "ubuntu-latest" runner (a cloud machine) CANNOT reach a private
+    # 192.168.x.x address directly - so a real "ssh into the server and
+    # deploy" step here will only work if EITHER:
+    #   (a) you install a GitHub Actions "self-hosted runner" ON the local
+    #       server itself (recommended - see below), OR
+    #   (b) the server is reachable from the internet via port-forwarding
+    #       or a VPN (Tailscale/WireGuard) and you use SSH secrets.
+    #
+    # Below is the SIMULATION version (safe placeholder, like your Django
+    # example). Replace it with the real self-hosted-runner deploy job
+    # underneath once you're ready.
+    # --------------------------------------------------------------
+    - name: Simulate Deployment Output
+      run: |
+        echo "🚀 Starting Deployment to Local ANPR Server..."
+        echo "ℹ️ (Simulation Mode: Skipping actual deploy - see comments in this file)"
+        echo "✅ Deployment step completed (simulated)."
+
+# =========================================================
+# REAL DEPLOYMENT (use this instead, once ready)
+# =========================================================
+# Option A - Self-hosted runner (recommended for a local/private-network
+# server): install the GitHub Actions runner directly on your local ANPR
+# server (Settings -> Actions -> Runners -> New self-hosted runner in your
+# repo), then replace the "deploy" job above with:
+#
+#   deploy:
+#     name: Deploy to Local Server
+#     runs-on: self-hosted          # <-- runs ON your local server, no SSH needed
+#     needs: test
+#     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+#     steps:
+#       - name: Checkout Code
+#         uses: actions/checkout@v4
+#       - name: Deploy
+#         run: |
+#           bash /opt/anpr_project/deploy.sh
+#
+# Option B - SSH from a GitHub-hosted runner (only if the server has a
+# public IP / port-forwarding / VPN reachable from the internet):
+#
+#   deploy:
+#     name: Deploy to Local Server via SSH
+#     runs-on: ubuntu-latest
+#     needs: test
+#     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+#     steps:
+#       - name: Deploy over SSH
+#         uses: appleboy/ssh-action@v1.0.3
+#         with:
+#           host: ${{ secrets.SERVER_HOST }}
+#           username: ${{ secrets.SERVER_USER }}
+#           key: ${{ secrets.SERVER_SSH_KEY }}
+#           script: bash /opt/anpr_project/deploy.sh
+#
+#   (Add SERVER_HOST, SERVER_USER, SERVER_SSH_KEY as repo secrets under
+#    Settings -> Secrets and variables -> Actions.)
