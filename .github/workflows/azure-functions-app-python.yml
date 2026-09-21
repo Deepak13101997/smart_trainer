@@ -2,9 +2,9 @@ name: ANPR Flask CI/CD Pipeline
 
 on:
   push:
-    branches: [ "sub-main", "main" ]
+    branches: [ "dev", "main" ]
   pull_request:
-    branches: [ "sub-main", "main" ]
+    branches: [ "dev", "main" ]
 
 jobs:
   # =========================================================
